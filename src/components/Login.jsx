@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { CheckSquare, Lock, Mail, User, Info, CheckCircle2, KeyRound } from 'lucide-react';
+import { CheckSquare, Lock, Mail, User, Info, CheckCircle2, KeyRound, Shield } from 'lucide-react';
 
-export default function Login() {
+export default function Login({ onNavigateToAdmin }) {
   const { login, signup, resetPassword, isFirebaseConfigured } = useAuth();
   const [isSignUp, setIsSignUp] = useState(false);
   const [email, setEmail] = useState('');
@@ -222,6 +222,27 @@ export default function Login() {
             style={{ background: 'none', border: 'none', color: 'var(--accent-primary)', fontWeight: '700', cursor: 'pointer' }}
           >
             {isSignUp ? 'Sign In' : 'Sign Up'}
+          </button>
+        </div>
+
+        {/* Admin Portal Navigation Link */}
+        <div style={{ textAlign: 'center', marginTop: '1.25rem', paddingTop: '1.1rem', borderTop: '1px solid rgba(255,255,255,0.06)', fontSize: '0.82rem' }}>
+          <button 
+            type="button"
+            onClick={onNavigateToAdmin}
+            style={{ 
+              background: 'none', 
+              border: 'none', 
+              color: '#f59e0b', 
+              fontWeight: '600', 
+              cursor: 'pointer',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '0.35rem',
+              opacity: 0.95
+            }}
+          >
+            <Shield size={14} /> Admin Login Portal (`/admin`)
           </button>
         </div>
 
