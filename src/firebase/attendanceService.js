@@ -8,25 +8,35 @@ import {
   deleteDoc 
 } from 'firebase/firestore';
 
-// Save or Update Attendance Record permanently in Firestore
+// Save or Update Entire Attendance Map for a specific date in Firestore
+export const saveDailyAttendance = async (dateStr, attendanceMap) => {
+  if (!isFirebaseConfigured() || !db) return;
+
+  try {
+    const docRef = doc(db, 'attendance', dateStr);
+    await setDoc(docRef, attendanceMap, { merge: true });
+    console.log(`💾 [Attendance Saved] Date: "${dateStr}"`, attendanceMap);
+  } catch (error) {
+    console.error("❌ Error saving attendance to Firestore:", error);
+    throw error;
+  }
+};
+
+// Save individual attendance status for an employee on a date
 export const saveAttendanceRecord = async (dateStr, empId, status) => {
   if (!isFirebaseConfigured() || !db) return;
 
   const key = String(empId);
   try {
     const docRef = doc(db, 'attendance', dateStr);
-    // Writes/merges [key]: status into document 'attendance/{dateStr}'
-    await setDoc(docRef, {
-      [key]: status
-    }, { merge: true });
-    
-    console.log(`💾 [Firestore Attendance Saved] Date: "${dateStr}", EmpID: "${key}", Status: "${status}"`);
+    await setDoc(docRef, { [key]: status }, { merge: true });
+    console.log(`💾 [Attendance Single Save] Date: "${dateStr}", EmpID: "${key}", Status: "${status}"`);
   } catch (error) {
-    console.error("❌ Error saving attendance to Firestore:", error);
+    console.error("❌ Error saving single attendance to Firestore:", error);
   }
 };
 
-// Real-time listener for attendance records across all dates
+// Single, performance-optimized real-time listener for attendance collection
 export const subscribeToAttendance = (callback) => {
   if (!isFirebaseConfigured() || !db) return () => {};
 
@@ -37,10 +47,9 @@ export const subscribeToAttendance = (callback) => {
       snapshot.forEach(docSnap => {
         data[docSnap.id] = docSnap.data();
       });
-      console.log(`📡 [Firestore Sync] Loaded attendance for ${Object.keys(data).length} dates.`);
       callback(data);
     }, (error) => {
-      console.error("❌ Error subscribing to Firestore attendance:", error);
+      console.error("❌ Error subscribing to attendance:", error);
     });
   } catch (error) {
     console.error("Error setting up attendance listener:", error);
@@ -48,137 +57,92 @@ export const subscribeToAttendance = (callback) => {
   }
 };
 
-// Admin invites a new employee by email -> Creates document in 'invitedEmployees' collection
-export const inviteEmployeeToFirestore = async (empData) => {
+// Admin adds an employee by Name + Email -> Saves to 'employees' collection
+export const addEmployeeToFirestore = async (empData) => {
   if (!isFirebaseConfigured() || !db) return;
 
   const normalizedEmail = empData.email.toLowerCase().trim();
 
   try {
-    const docRef = doc(db, 'invitedEmployees', normalizedEmail);
+    const docRef = doc(db, 'employees', normalizedEmail);
     await setDoc(docRef, {
+      id: normalizedEmail,
       email: normalizedEmail,
       name: empData.name.trim(),
-      designation: empData.designation?.trim() || 'Team Member',
+      designation: empData.designation?.trim() || 'Staff Member',
       department: empData.department || 'General',
       role: 'employee',
-      status: 'pending',
-      invitedAt: new Date().toISOString()
+      addedAt: new Date().toISOString()
     }, { merge: true });
-    
-    console.log(`✉️ [Invite] Successfully created pending invite for "${normalizedEmail}" in invitedEmployees collection.`);
+
+    console.log(`✅ [Employee Added] Saved "${normalizedEmail}" to employees collection.`);
   } catch (error) {
-    console.error("Error creating employee invitation in Firestore:", error);
+    console.error("❌ Error adding employee to Firestore:", error);
     throw error;
   }
 };
 
-// Check if an email has a pending invitation in 'invitedEmployees' collection
-export const checkEmployeeInvite = async (email) => {
+// Check if an email is registered in 'employees' collection (added by Admin)
+export const checkRegisteredEmployee = async (email) => {
   if (!isFirebaseConfigured() || !db) return null;
 
   const normalizedEmail = email.toLowerCase().trim();
   try {
-    const docRef = doc(db, 'invitedEmployees', normalizedEmail);
+    const docRef = doc(db, 'employees', normalizedEmail);
     const snap = await getDoc(docRef);
     if (snap.exists()) {
-      const data = snap.data();
-      if (data.status === 'pending') {
-        return data;
-      }
+      return snap.data();
     }
   } catch (error) {
-    console.error("Error checking employee invite in Firestore:", error);
-    throw error;
+    console.error("Error checking registered employee in Firestore:", error);
   }
   return null;
 };
 
-// Delete Employee (active user or pending invite) from Firestore
+// Delete Employee from 'employees' and 'users' collections
 export const deleteEmployeeFromFirestore = async (empId, email) => {
   if (!isFirebaseConfigured() || !db) return;
 
   try {
-    if (empId) {
-      const userDocRef = doc(db, 'users', empId.toString());
-      await deleteDoc(userDocRef).catch(() => {});
+    if (email) {
+      const empDocRef = doc(db, 'employees', email.toLowerCase().trim());
+      await deleteDoc(empDocRef).catch(() => {});
     }
 
-    if (email) {
-      const inviteDocRef = doc(db, 'invitedEmployees', email.toLowerCase().trim());
-      await deleteDoc(inviteDocRef).catch(() => {});
+    if (empId && empId !== email) {
+      const userDocRef = doc(db, 'users', empId.toString());
+      await deleteDoc(userDocRef).catch(() => {});
     }
   } catch (error) {
     console.error("Error deleting employee from Firestore:", error);
   }
 };
 
-// Real-time listener for Employees (combines active signed-up users and pending invited employees)
+// Optimized single real-time listener for 'employees' collection
 export const subscribeToEmployees = (callback) => {
   if (!isFirebaseConfigured() || !db) return () => {};
 
-  let activeUsers = [];
-  let pendingInvites = [];
-
-  const updateRoster = () => {
-    const activeEmails = new Set(activeUsers.map(u => (u.email || '').toLowerCase().trim()));
-    
-    // Filter pending invites that haven't signed up yet
-    const filteredPending = pendingInvites.filter(inv => !activeEmails.has((inv.email || '').toLowerCase().trim()));
-    
-    const combined = [...activeUsers, ...filteredPending];
-    callback(combined);
-  };
-
   try {
-    // 1. Listen to active registered users in 'users' collection
-    const usersCollection = collection(db, 'users');
-    const unsubUsers = onSnapshot(usersCollection, (snapshot) => {
-      activeUsers = [];
+    const employeesCollection = collection(db, 'employees');
+    return onSnapshot(employeesCollection, (snapshot) => {
+      const list = [];
       snapshot.forEach(docSnap => {
         const data = docSnap.data();
-        const rawRole = String(data.role || 'employee').toLowerCase().trim();
-        if (rawRole !== 'admin' && rawRole !== 'administrator') {
-          activeUsers.push({
-            id: data.uid || docSnap.id,
-            uid: data.uid || docSnap.id,
-            name: data.name || data.displayName || data.email?.split('@')[0] || 'Employee',
-            email: data.email || '',
-            designation: data.designation || 'Team Member',
-            department: data.department || 'General',
-            accountStatus: 'active' // 🟢 Active account
-          });
-        }
+        list.push({
+          id: data.id || data.email || docSnap.id,
+          uid: data.uid || data.id || docSnap.id,
+          name: data.name || data.email?.split('@')[0] || 'Employee',
+          email: data.email || docSnap.id,
+          designation: data.designation || 'Staff Member',
+          department: data.department || 'General'
+        });
       });
-      updateRoster();
+      callback(list);
+    }, (error) => {
+      console.error("❌ Error subscribing to employees collection:", error);
     });
-
-    // 2. Listen to pending invitations in 'invitedEmployees' collection
-    const invitesCollection = collection(db, 'invitedEmployees');
-    const unsubInvites = onSnapshot(invitesCollection, (snapshot) => {
-      pendingInvites = [];
-      snapshot.forEach(docSnap => {
-        const data = docSnap.data();
-        if (data.status === 'pending') {
-          pendingInvites.push({
-            id: `invite-${docSnap.id}`,
-            name: data.name || data.email?.split('@')[0] || 'Invited Employee',
-            email: data.email || docSnap.id,
-            designation: data.designation || 'Team Member',
-            department: data.department || 'General',
-            accountStatus: 'pending' // 🟡 Pending invitation
-          });
-        }
-      });
-      updateRoster();
-    });
-
-    return () => {
-      unsubUsers();
-      unsubInvites();
-    };
   } catch (error) {
-    console.error("Error setting up real-time listener for employees:", error);
+    console.error("Error setting up listener for employees:", error);
     return () => {};
   }
 };

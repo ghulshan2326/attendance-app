@@ -1,12 +1,12 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, Suspense, lazy } from 'react';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import Login from './components/Login';
-import AdminLogin from './components/AdminLogin';
-import EmployeePortal from './components/EmployeePortal';
+import Toast from './components/Toast';
 import { 
+  saveDailyAttendance, 
   saveAttendanceRecord, 
   subscribeToAttendance, 
-  inviteEmployeeToFirestore, 
+  addEmployeeToFirestore, 
   deleteEmployeeFromFirestore, 
   subscribeToEmployees 
 } from './firebase/attendanceService';
@@ -20,10 +20,31 @@ import {
   LogOut,
   Shield,
   User,
-  Mail,
+  Save,
   CheckCircle2,
-  Clock
+  Sparkles
 } from 'lucide-react';
+
+// Code Splitting / Lazy Loading for Performance
+const AdminLogin = lazy(() => import('./components/AdminLogin'));
+const EmployeePortal = lazy(() => import('./components/EmployeePortal'));
+
+// Minimalist Loading Spinner for Lazy-loaded routes
+function LoadingSpinner() {
+  return (
+    <div style={{ minHeight: '60vh', display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: '1rem' }}>
+      <div style={{
+        width: '42px',
+        height: '42px',
+        border: '3px solid rgba(99, 102, 241, 0.2)',
+        borderTopColor: '#6366f1',
+        borderRadius: '50%',
+        animation: 'spin 0.8s linear infinite'
+      }} />
+      <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)', fontWeight: '600' }}>Loading Portal...</span>
+    </div>
+  );
+}
 
 const INITIAL_EMPLOYEES = [];
 
@@ -34,23 +55,26 @@ function MainApp({ isForceAdminRoute }) {
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
   const [selectedMonth, setSelectedMonth] = useState('2026-08');
 
-  // Employee roster (Populated dynamically from Firestore 'users' and 'invitedEmployees')
+  // Employee roster
   const [employees, setEmployees] = useState(INITIAL_EMPLOYEES);
 
-  // New Employee form state
+  // New Employee form state (Name + Email)
   const [newEmpName, setNewEmpName] = useState('');
   const [newEmpEmail, setNewEmpEmail] = useState('');
   const [newEmpRole, setNewEmpRole] = useState('');
   const [newEmpDept, setNewEmpDept] = useState('Engineering');
-  const [inviteSuccessMsg, setInviteSuccessMsg] = useState('');
 
   // Attendance store
   const [attendanceData, setAttendanceData] = useState({});
 
-  // Admin access granted if logged in through /admin route OR userRole is 'admin' in Firestore
+  // Toast notification message
+  const [toastMessage, setToastMessage] = useState('');
+  const [savingAttendance, setSavingAttendance] = useState(false);
+
+  // Admin access check
   const isAdmin = isForceAdminRoute || userRole === 'admin';
 
-  // Real-time Firestore sync listeners
+  // Single Real-time Firestore sync listeners
   useEffect(() => {
     if (!isFirebaseConfigured) return;
 
@@ -68,9 +92,9 @@ function MainApp({ isForceAdminRoute }) {
     };
   }, [isFirebaseConfigured]);
 
-  // Mark attendance for an employee on selectedDate (Admin Only)
-  const handleStatusChange = async (empId, status) => {
-    if (!isAdmin) return; // Strict Admin Protection
+  // Mark status in local state for selectedDate
+  const handleStatusChange = useCallback((empId, status) => {
+    if (!isAdmin) return;
 
     setAttendanceData(prev => ({
       ...prev,
@@ -79,29 +103,41 @@ function MainApp({ isForceAdminRoute }) {
         [empId]: status
       }
     }));
+  }, [isAdmin, selectedDate]);
 
-    // Save to Firestore
-    await saveAttendanceRecord(selectedDate, empId, status);
+  // Save Attendance to Firestore for selectedDate
+  const handleSaveAttendance = async () => {
+    if (!isAdmin) return;
+    setSavingAttendance(true);
+
+    try {
+      const currentDayMap = attendanceData[selectedDate] || {};
+      await saveDailyAttendance(selectedDate, { [selectedDate]: currentDayMap });
+      setToastMessage(`Attendance saved successfully for ${selectedDate}!`);
+    } catch (err) {
+      console.error(err);
+      setToastMessage('Failed to save attendance. Please try again.');
+    } finally {
+      setSavingAttendance(false);
+    }
   };
 
-  // Invite new employee by Email (Admin Only)
+  // Add new employee (Admin Only: Name + Email)
   const handleAddEmployee = async (e) => {
     e.preventDefault();
     if (!isAdmin) return;
     if (!newEmpName.trim() || !newEmpEmail.trim()) return;
 
-    setInviteSuccessMsg('');
-
     const empData = {
       name: newEmpName.trim(),
       email: newEmpEmail.toLowerCase().trim(),
-      designation: newEmpRole.trim() || 'Team Member',
+      designation: newEmpRole.trim() || 'Staff Member',
       department: newEmpDept
     };
 
     try {
-      await inviteEmployeeToFirestore(empData);
-      setInviteSuccessMsg(`Invitation sent! ${newEmpEmail.toLowerCase().trim()} can now sign up on the registration page.`);
+      await addEmployeeToFirestore(empData);
+      setToastMessage(`Employee ${newEmpName} registered successfully!`);
       setNewEmpName('');
       setNewEmpEmail('');
       setNewEmpRole('');
@@ -110,40 +146,42 @@ function MainApp({ isForceAdminRoute }) {
     }
   };
 
-  // Remove employee or revoke pending invite (Admin Only)
+  // Remove employee (Admin Only)
   const handleRemoveEmployee = async (emp) => {
     if (!isAdmin) return;
     await deleteEmployeeFromFirestore(emp.id || emp.uid, emp.email);
+    setToastMessage(`Employee removed.`);
   };
 
-  // Calculate daily statistics for selectedDate
-  const currentDayRecords = attendanceData[selectedDate] || {};
-  let totalPresent = 0;
-  let totalAbsent = 0;
-  let totalLate = 0;
-  let totalLeave = 0;
+  // Memoized daily statistics for selectedDate
+  const currentDayRecords = useMemo(() => attendanceData[selectedDate] || {}, [attendanceData, selectedDate]);
+  
+  const dailyStats = useMemo(() => {
+    let present = 0, absent = 0, late = 0, leave = 0;
+    employees.forEach(emp => {
+      const st = currentDayRecords[emp.id || emp.email];
+      if (st === 'P') present++;
+      else if (st === 'A') absent++;
+      else if (st === 'L') late++;
+      else if (st === 'H') leave++;
+    });
+    return { present, absent, late, leave };
+  }, [employees, currentDayRecords]);
 
-  employees.forEach(emp => {
-    const st = currentDayRecords[emp.id];
-    if (st === 'P') totalPresent++;
-    else if (st === 'A') totalAbsent++;
-    else if (st === 'L') totalLate++;
-    else if (st === 'H') totalLeave++;
-  });
-
-  // Helper for Monthly Register days
-  const getDaysInMonth = (yearMonthStr) => {
-    const [year, month] = yearMonthStr.split('-').map(Number);
+  // Days array generator for monthly register
+  const daysInMonth = useMemo(() => {
+    const [year, month] = selectedMonth.split('-').map(Number);
     const date = new Date(year, month, 0);
     const daysCount = date.getDate();
     return Array.from({ length: daysCount }, (_, i) => i + 1);
-  };
-
-  const daysInMonth = getDaysInMonth(selectedMonth);
+  }, [selectedMonth]);
 
   return (
     <div style={{ maxWidth: '1200px', margin: '0 auto', padding: '1.5rem' }}>
       
+      {/* Toast Popup Notification */}
+      <Toast message={toastMessage} onClose={() => setToastMessage('')} />
+
       {/* Header Banner */}
       <header className="glass-panel app-header" style={{ marginBottom: '1.5rem', flexWrap: 'wrap', gap: '1rem' }}>
         <div className="brand">
@@ -151,8 +189,8 @@ function MainApp({ isForceAdminRoute }) {
             <CheckSquare size={24} />
           </div>
           <div>
-            <h1 className="brand-title">Attendance Tracker</h1>
-            <p className="brand-subtitle">Firebase Auth & Cloud Firestore Database</p>
+            <h1 className="brand-title">Attendance Tracker Pro</h1>
+            <p className="brand-subtitle">University & Enterprise Attendance Management</p>
           </div>
         </div>
 
@@ -187,13 +225,15 @@ function MainApp({ isForceAdminRoute }) {
 
       {/* RENDER EMPLOYEE PORTAL IF NOT ADMIN */}
       {!isAdmin ? (
-        <EmployeePortal 
-          currentUser={currentUser}
-          employees={employees}
-          attendanceData={attendanceData}
-          selectedMonth={selectedMonth}
-          setSelectedMonth={setSelectedMonth}
-        />
+        <Suspense fallback={<LoadingSpinner />}>
+          <EmployeePortal 
+            currentUser={currentUser}
+            employees={employees}
+            attendanceData={attendanceData}
+            selectedMonth={selectedMonth}
+            setSelectedMonth={setSelectedMonth}
+          />
+        </Suspense>
       ) : (
         /* RENDER ADMIN CONTROLS IF ADMIN ROLE OR ACCESSED VIA /admin ROUTE */
         <>
@@ -204,15 +244,7 @@ function MainApp({ isForceAdminRoute }) {
               onClick={() => setActiveTab('mark')}
               style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}
             >
-              <Calendar size={16} /> Mark Attendance
-            </button>
-
-            <button 
-              className={`pill-btn ${activeTab === 'register' ? 'active' : ''}`}
-              onClick={() => setActiveTab('register')}
-              style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}
-            >
-              <CalendarDays size={16} /> Monthly Register
+              <Calendar size={16} /> Attendance
             </button>
 
             <button 
@@ -222,12 +254,20 @@ function MainApp({ isForceAdminRoute }) {
             >
               <Users size={16} /> Employees ({employees.length})
             </button>
+
+            <button 
+              className={`pill-btn ${activeTab === 'register' ? 'active' : ''}`}
+              onClick={() => setActiveTab('register')}
+              style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}
+            >
+              <CalendarDays size={16} /> Monthly Register
+            </button>
           </div>
 
           {/* TAB 1: MARK ATTENDANCE */}
           {activeTab === 'mark' && (
             <div>
-              <div className="glass-panel controls-bar" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem' }}>
+              <div className="glass-panel controls-bar" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem', marginBottom: '1.25rem' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
                   <label style={{ fontWeight: '600', color: 'var(--text-muted)', fontSize: '0.9rem' }}>Select Date:</label>
                   <input 
@@ -247,12 +287,25 @@ function MainApp({ isForceAdminRoute }) {
                   />
                 </div>
 
-                <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
-                  <span className="badge badge-present">Present: {totalPresent}</span>
-                  <span className="badge badge-late">Late: {totalLate}</span>
-                  <span className="badge badge-absent">Absent: {totalAbsent}</span>
-                  <span className="badge badge-leave">Leave: {totalLeave}</span>
-                  <span className="badge" style={{ background: 'rgba(255,255,255,0.08)', color: 'var(--text-main)' }}>Total Staff: {employees.length}</span>
+                <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap', alignItems: 'center' }}>
+                  <span className="badge badge-present">Present: {dailyStats.present}</span>
+                  <span className="badge badge-late">Late: {dailyStats.late}</span>
+                  <span className="badge badge-absent">Absent: {dailyStats.absent}</span>
+                  <span className="badge badge-leave">Leave: {dailyStats.leave}</span>
+                  
+                  <button 
+                    onClick={handleSaveAttendance}
+                    disabled={savingAttendance}
+                    className="btn btn-primary"
+                    style={{ 
+                      height: '38px', 
+                      background: 'linear-gradient(135deg, #10b981, #059669)',
+                      fontWeight: '700',
+                      boxShadow: '0 4px 12px rgba(16, 185, 129, 0.3)'
+                    }}
+                  >
+                    <Save size={16} /> {savingAttendance ? 'Saving...' : 'Save Attendance'}
+                  </button>
                 </div>
               </div>
 
@@ -271,14 +324,15 @@ function MainApp({ isForceAdminRoute }) {
                     {employees.length === 0 ? (
                       <tr>
                         <td colSpan="5" style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-dim)' }}>
-                          No employees found. Invite an employee under the <strong>Employees</strong> tab!
+                          No employees added yet. Go to the <strong>Employees</strong> tab to add your team members!
                         </td>
                       </tr>
                     ) : (
                       employees.map((emp, index) => {
-                        const status = currentDayRecords[emp.id] || '';
+                        const empKey = emp.id || emp.email;
+                        const status = currentDayRecords[empKey] || '';
                         return (
-                          <tr key={emp.id}>
+                          <tr key={empKey}>
                             <td style={{ color: 'var(--text-dim)', fontWeight: '600' }}>{index + 1}</td>
                             <td>
                               <div style={{ fontWeight: '700', color: 'var(--text-main)' }}>{emp.name}</div>
@@ -294,25 +348,25 @@ function MainApp({ isForceAdminRoute }) {
                               <div className="status-selector" style={{ margin: '0 auto' }}>
                                 <button 
                                   className={`status-btn present ${status === 'P' ? 'active' : ''}`}
-                                  onClick={() => handleStatusChange(emp.id, 'P')}
+                                  onClick={() => handleStatusChange(empKey, 'P')}
                                 >
                                   Present (P)
                                 </button>
                                 <button 
                                   className={`status-btn late ${status === 'L' ? 'active' : ''}`}
-                                  onClick={() => handleStatusChange(emp.id, 'L')}
+                                  onClick={() => handleStatusChange(empKey, 'L')}
                                 >
                                   Late (L)
                                 </button>
                                 <button 
                                   className={`status-btn absent ${status === 'A' ? 'active' : ''}`}
-                                  onClick={() => handleStatusChange(emp.id, 'A')}
+                                  onClick={() => handleStatusChange(empKey, 'A')}
                                 >
                                   Absent (A)
                                 </button>
                                 <button 
                                   className={`status-btn leave ${status === 'H' ? 'active' : ''}`}
-                                  onClick={() => handleStatusChange(emp.id, 'H')}
+                                  onClick={() => handleStatusChange(empKey, 'H')}
                                 >
                                   Leave (H)
                                 </button>
@@ -328,7 +382,119 @@ function MainApp({ isForceAdminRoute }) {
             </div>
           )}
 
-          {/* TAB 2: MONTHLY REGISTER */}
+          {/* TAB 2: EMPLOYEES (Add Name + Email) */}
+          {activeTab === 'employees' && isAdmin && (
+            <div>
+              <div className="glass-panel controls-bar" style={{ marginBottom: '1.5rem' }}>
+                <h3 style={{ fontSize: '1.05rem', fontWeight: '700', marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <UserPlus size={18} color="#f59e0b" /> Add Employee (Name + Email)
+                </h3>
+
+                <form onSubmit={handleAddEmployee} style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '1rem', alignItems: 'end' }}>
+                  <div className="form-group" style={{ marginBottom: 0 }}>
+                    <label>Full Name</label>
+                    <input 
+                      type="text" 
+                      required
+                      placeholder="e.g. John Doe"
+                      value={newEmpName}
+                      onChange={(e) => setNewEmpName(e.target.value)}
+                    />
+                  </div>
+
+                  <div className="form-group" style={{ marginBottom: 0 }}>
+                    <label>Email Address</label>
+                    <input 
+                      type="email" 
+                      required
+                      placeholder="john@company.com"
+                      value={newEmpEmail}
+                      onChange={(e) => setNewEmpEmail(e.target.value)}
+                    />
+                  </div>
+
+                  <div className="form-group" style={{ marginBottom: 0 }}>
+                    <label>Designation</label>
+                    <input 
+                      type="text" 
+                      placeholder="e.g. Software Engineer"
+                      value={newEmpRole}
+                      onChange={(e) => setNewEmpRole(e.target.value)}
+                    />
+                  </div>
+
+                  <div className="form-group" style={{ marginBottom: 0 }}>
+                    <label>Department</label>
+                    <select
+                      value={newEmpDept}
+                      onChange={(e) => setNewEmpDept(e.target.value)}
+                    >
+                      <option value="Engineering">Engineering</option>
+                      <option value="Design">Design</option>
+                      <option value="Management">Management</option>
+                      <option value="Quality Assurance">Quality Assurance</option>
+                      <option value="HR">HR</option>
+                    </select>
+                  </div>
+
+                  <button type="submit" className="btn btn-primary" style={{ height: '42px', justifyContent: 'center', background: 'linear-gradient(135deg, #f59e0b, #d97706)' }}>
+                    <UserPlus size={16} /> Register Employee
+                  </button>
+                </form>
+              </div>
+
+              <div className="glass-panel table-container">
+                <table className="attendance-table">
+                  <thead>
+                    <tr>
+                      <th>#</th>
+                      <th>Name & Email</th>
+                      <th>Designation</th>
+                      <th>Department</th>
+                      <th style={{ textAlign: 'right' }}>Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {employees.length === 0 ? (
+                      <tr>
+                        <td colSpan="5" style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-dim)' }}>
+                          No employees added yet. Use the form above to add your team!
+                        </td>
+                      </tr>
+                    ) : (
+                      employees.map((emp, idx) => (
+                        <tr key={emp.id || emp.email}>
+                          <td style={{ color: 'var(--text-dim)', fontWeight: '600' }}>{idx + 1}</td>
+                          <td>
+                            <div style={{ fontWeight: '700', color: 'var(--text-main)' }}>{emp.name}</div>
+                            {emp.email && <div style={{ fontSize: '0.78rem', color: 'var(--text-dim)' }}>{emp.email}</div>}
+                          </td>
+                          <td style={{ color: 'var(--text-muted)' }}>{emp.designation}</td>
+                          <td>
+                            <span className="badge" style={{ background: 'rgba(255,255,255,0.06)', color: 'var(--text-muted)' }}>
+                              {emp.department}
+                            </span>
+                          </td>
+                          <td style={{ textAlign: 'right' }}>
+                            <button 
+                              className="btn-icon-only"
+                              style={{ color: 'var(--status-absent)', borderColor: 'rgba(239, 68, 68, 0.2)' }}
+                              onClick={() => handleRemoveEmployee(emp)}
+                              title="Remove Employee"
+                            >
+                              <Trash2 size={16} />
+                            </button>
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* TAB 3: MONTHLY REGISTER */}
           {activeTab === 'register' && (
             <div>
               <div className="glass-panel controls-bar" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -382,17 +548,18 @@ function MainApp({ isForceAdminRoute }) {
                       </tr>
                     ) : (
                       employees.map(emp => {
+                        const empKey = emp.id || emp.email;
                         let monthP = 0;
                         let monthA = 0;
 
                         return (
-                          <tr key={emp.id}>
+                          <tr key={empKey}>
                             <td style={{ position: 'sticky', left: 0, background: '#121826', zIndex: 1, fontWeight: '700' }}>
                               {emp.name}
                             </td>
                             {daysInMonth.map(day => {
                               const dayStr = `${selectedMonth}-${day < 10 ? '0' + day : day}`;
-                              const st = attendanceData[dayStr]?.[emp.id] || '-';
+                              const st = attendanceData[dayStr]?.[empKey] || '-';
                               
                               if (st === 'P') monthP++;
                               if (st === 'A') monthA++;
@@ -413,149 +580,7 @@ function MainApp({ isForceAdminRoute }) {
                             <td style={{ textAlign: 'center', fontWeight: '800', color: 'var(--status-absent)' }}>{monthA}</td>
                           </tr>
                         );
-                      })
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
-
-          {/* TAB 3: EMPLOYEES (Admin Only Invite & Manage) */}
-          {activeTab === 'employees' && isAdmin && (
-            <div>
-              <div className="glass-panel controls-bar" style={{ marginBottom: '1.5rem' }}>
-                <h3 style={{ fontSize: '1.05rem', fontWeight: '700', marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                  <UserPlus size={18} color="#f59e0b" /> Invite New Employee by Email
-                </h3>
-
-                {inviteSuccessMsg && (
-                  <div style={{ 
-                    background: 'rgba(16, 185, 129, 0.15)', 
-                    border: '1px solid rgba(16, 185, 129, 0.3)', 
-                    borderRadius: '8px', 
-                    padding: '0.75rem 1rem', 
-                    color: 'var(--status-present)', 
-                    fontSize: '0.85rem',
-                    marginBottom: '1rem',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '0.5rem'
-                  }}>
-                    <CheckCircle2 size={16} /> {inviteSuccessMsg}
-                  </div>
-                )}
-
-                <form onSubmit={handleAddEmployee} style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '1rem', alignItems: 'end' }}>
-                  <div className="form-group" style={{ marginBottom: 0 }}>
-                    <label>Full Name</label>
-                    <input 
-                      type="text" 
-                      required
-                      placeholder="e.g. John Doe"
-                      value={newEmpName}
-                      onChange={(e) => setNewEmpName(e.target.value)}
-                    />
-                  </div>
-
-                  <div className="form-group" style={{ marginBottom: 0 }}>
-                    <label>Email Address</label>
-                    <input 
-                      type="email" 
-                      required
-                      placeholder="john@company.com"
-                      value={newEmpEmail}
-                      onChange={(e) => setNewEmpEmail(e.target.value)}
-                    />
-                  </div>
-
-                  <div className="form-group" style={{ marginBottom: 0 }}>
-                    <label>Designation</label>
-                    <input 
-                      type="text" 
-                      placeholder="e.g. Software Engineer"
-                      value={newEmpRole}
-                      onChange={(e) => setNewEmpRole(e.target.value)}
-                    />
-                  </div>
-
-                  <div className="form-group" style={{ marginBottom: 0 }}>
-                    <label>Department</label>
-                    <select
-                      value={newEmpDept}
-                      onChange={(e) => setNewEmpDept(e.target.value)}
-                    >
-                      <option value="Engineering">Engineering</option>
-                      <option value="Design">Design</option>
-                      <option value="Management">Management</option>
-                      <option value="Quality Assurance">Quality Assurance</option>
-                      <option value="HR">HR</option>
-                    </select>
-                  </div>
-
-                  <button type="submit" className="btn btn-primary" style={{ height: '42px', justifyContent: 'center', background: 'linear-gradient(135deg, #f59e0b, #d97706)' }}>
-                    <Mail size={16} /> Send Email Invite
-                  </button>
-                </form>
-              </div>
-
-              <div className="glass-panel table-container">
-                <table className="attendance-table">
-                  <thead>
-                    <tr>
-                      <th>#</th>
-                      <th>Name & Email</th>
-                      <th>Designation</th>
-                      <th>Department</th>
-                      <th>Onboarding Status</th>
-                      <th style={{ textAlign: 'right' }}>Action</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {employees.length === 0 ? (
-                      <tr>
-                        <td colSpan="6" style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-dim)' }}>
-                          No employees invited or registered yet. Use the form above to invite your team!
-                        </td>
-                      </tr>
-                    ) : (
-                      employees.map((emp, idx) => (
-                        <tr key={emp.id}>
-                          <td style={{ color: 'var(--text-dim)', fontWeight: '600' }}>{idx + 1}</td>
-                          <td>
-                            <div style={{ fontWeight: '700', color: 'var(--text-main)' }}>{emp.name}</div>
-                            {emp.email && <div style={{ fontSize: '0.78rem', color: 'var(--text-dim)' }}>{emp.email}</div>}
-                          </td>
-                          <td style={{ color: 'var(--text-muted)' }}>{emp.designation}</td>
-                          <td>
-                            <span className="badge" style={{ background: 'rgba(255,255,255,0.06)', color: 'var(--text-muted)' }}>
-                              {emp.department}
-                            </span>
-                          </td>
-                          <td>
-                            {emp.accountStatus === 'active' ? (
-                              <span className="badge badge-present" style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem' }}>
-                                <CheckCircle2 size={13} /> Active
-                              </span>
-                            ) : (
-                              <span className="badge badge-late" style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem' }}>
-                                <Clock size={13} /> Pending Invite
-                              </span>
-                            )}
-                          </td>
-                          <td style={{ textAlign: 'right' }}>
-                            <button 
-                              className="btn-icon-only"
-                              style={{ color: 'var(--status-absent)', borderColor: 'rgba(239, 68, 68, 0.2)' }}
-                              onClick={() => handleRemoveEmployee(emp)}
-                              title={emp.accountStatus === 'active' ? 'Remove Employee' : 'Revoke Invitation'}
-                            >
-                              <Trash2 size={16} />
-                            </button>
-                          </td>
-                        </tr>
-                      ))
-                    )}
+                      }))}
                   </tbody>
                 </table>
               </div>
@@ -580,19 +605,22 @@ function AppContent() {
     return () => window.removeEventListener('popstate', handlePopState);
   }, []);
 
-  const navigateTo = (path) => {
+  const navigateTo = useCallback((path) => {
     window.history.pushState({}, '', path);
     setCurrentPath(path);
-  };
+  }, []);
 
   const isAdminRoute = currentPath === '/admin' || currentPath === '/admin/';
 
   // Route 1: Admin Route (/admin)
   if (isAdminRoute) {
     if (!currentUser) {
-      return <AdminLogin onNavigateToEmployeeLogin={() => navigateTo('/')} />;
+      return (
+        <Suspense fallback={<LoadingSpinner />}>
+          <AdminLogin onNavigateToEmployeeLogin={() => navigateTo('/')} />
+        </Suspense>
+      );
     }
-    // Authenticated through /admin route -> Directly show Admin Panel without Firestore role requirement
     return <MainApp isForceAdminRoute={true} />;
   }
 
