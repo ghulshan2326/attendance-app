@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { CheckSquare, Lock, Mail, User, Shield, Info } from 'lucide-react';
+import { CheckSquare, Lock, Mail, User, Info } from 'lucide-react';
 
 export default function Login() {
   const { login, signup, isFirebaseConfigured } = useAuth();
@@ -8,7 +8,6 @@ export default function Login() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [name, setName] = useState('');
-  const [role, setRole] = useState('employee'); // 'admin' | 'employee'
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
@@ -19,7 +18,8 @@ export default function Login() {
 
     try {
       if (isSignUp) {
-        await signup(email, password, name, role);
+        // Any new registration defaults to 'employee' role
+        await signup(email, password, name);
       } else {
         await login(email, password);
       }
@@ -28,17 +28,6 @@ export default function Login() {
       setError(err.message || 'Authentication failed. Check your credentials.');
     } finally {
       setLoading(false);
-    }
-  };
-
-  // Quick Demo Login Handler
-  const handleQuickDemoLogin = async (demoRole) => {
-    setError('');
-    const demoEmail = demoRole === 'admin' ? 'admin@company.com' : 'employee@company.com';
-    try {
-      await login(demoEmail, 'password123');
-    } catch (err) {
-      console.error(err);
     }
   };
 
@@ -53,7 +42,7 @@ export default function Login() {
           </div>
           <h2 style={{ fontSize: '1.6rem', fontWeight: '800' }}>Attendance Tracker Pro</h2>
           <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginTop: '0.3rem' }}>
-            {isSignUp ? 'Create your account to continue' : 'Sign in to access your portal'}
+            {isSignUp ? 'Create your employee account to continue' : 'Sign in to access your portal'}
           </p>
         </div>
 
@@ -72,9 +61,7 @@ export default function Login() {
           }}>
             <Info size={18} style={{ color: 'var(--accent-primary)', flexShrink: 0, marginTop: '2px' }} />
             <div>
-              <strong>Firebase Setup Note:</strong> Paste your `firebaseConfig` keys into <code>src/firebase/config.js</code>. 
-              <br />
-              <span style={{ opacity: 0.85 }}>You can use the <strong>Quick Demo Login</strong> buttons below to test Admin vs Employee roles right now!</span>
+              <strong>Firebase Setup Note:</strong> Paste your `firebaseConfig` keys into <code>src/firebase/config.js</code>.
             </div>
           </div>
         )}
@@ -141,23 +128,6 @@ export default function Login() {
             </div>
           </div>
 
-          {isSignUp && (
-            <div className="form-group">
-              <label>Account Role</label>
-              <div style={{ position: 'relative' }}>
-                <select 
-                  value={role} 
-                  onChange={(e) => setRole(e.target.value)}
-                  style={{ paddingLeft: '2.5rem' }}
-                >
-                  <option value="employee">Employee (View-Only Portal)</option>
-                  <option value="admin">Admin (Full Control & Manage Staff)</option>
-                </select>
-                <Shield size={16} style={{ position: 'absolute', left: '0.9rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-dim)' }} />
-              </div>
-            </div>
-          )}
-
           <button 
             type="submit" 
             className="btn btn-primary" 
@@ -167,29 +137,6 @@ export default function Login() {
             {loading ? 'Processing...' : (isSignUp ? 'Create Account' : 'Sign In')}
           </button>
         </form>
-
-        {/* Quick Demo Role Switching Buttons */}
-        <div style={{ marginTop: '1.5rem', pt: '1rem', borderTop: '1px solid var(--bg-card-border)', textAlign: 'center' }}>
-          <p style={{ fontSize: '0.8rem', color: 'var(--text-dim)', marginBottom: '0.75rem' }}>Quick Demo Role Login:</p>
-          <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'center' }}>
-            <button 
-              type="button" 
-              className="btn btn-secondary"
-              onClick={() => handleQuickDemoLogin('admin')}
-              style={{ fontSize: '0.8rem', padding: '0.5rem 0.9rem' }}
-            >
-              👑 Login as Admin
-            </button>
-            <button 
-              type="button" 
-              className="btn btn-secondary"
-              onClick={() => handleQuickDemoLogin('employee')}
-              style={{ fontSize: '0.8rem', padding: '0.5rem 0.9rem' }}
-            >
-              👤 Login as Employee
-            </button>
-          </div>
-        </div>
 
         {/* Toggle between Sign In and Sign Up */}
         <div style={{ textAlign: 'center', marginTop: '1.5rem', fontSize: '0.85rem' }}>
