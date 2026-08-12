@@ -150,7 +150,7 @@ export default function Login() {
                   onChange={(e) => setRole(e.target.value)}
                   style={{ paddingLeft: '2.5rem' }}
                 >
-                  <option value="employee">Employee (View Register & Check In)</option>
+                  <option value="employee">Employee (View-Only Portal)</option>
                   <option value="admin">Admin (Full Control & Manage Staff)</option>
                 </select>
                 <Shield size={16} style={{ position: 'absolute', left: '0.9rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-dim)' }} />

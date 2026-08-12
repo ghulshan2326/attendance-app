@@ -22,6 +22,8 @@ import {
   Info
 } from 'lucide-react';
 
+import EmployeePortal from './components/EmployeePortal';
+
 const INITIAL_EMPLOYEES = [
   { id: 1, name: 'Munibah Khan', designation: 'Software Engineer', department: 'Engineering' },
   { id: 2, name: 'Ayesha Ahmed', designation: 'UI Designer', department: 'Design' },
@@ -74,9 +76,10 @@ function MainApp() {
     };
   }, [isFirebaseConfigured]);
 
-  // Mark attendance for an employee on selectedDate
+  // Mark attendance for an employee on selectedDate (Admin Only)
   const handleStatusChange = async (empId, status) => {
-    // If employee role, restrict to marking own status only
+    if (!isAdmin) return; // Strict Admin Protection
+
     setAttendanceData(prev => ({
       ...prev,
       [selectedDate]: {
@@ -92,6 +95,7 @@ function MainApp() {
   // Add new employee (Admin Only)
   const handleAddEmployee = async (e) => {
     e.preventDefault();
+    if (!isAdmin) return;
     if (!newEmpName.trim()) return;
 
     const newEmp = {
@@ -110,6 +114,7 @@ function MainApp() {
 
   // Remove employee (Admin Only)
   const handleRemoveEmployee = async (id) => {
+    if (!isAdmin) return;
     setEmployees(prev => prev.filter(e => e.id !== id));
     await deleteEmployeeFromFirestore(id);
   };
@@ -172,7 +177,7 @@ function MainApp() {
             <div>
               <div style={{ fontWeight: '700', lineHeight: 1.2 }}>{currentUser?.displayName || currentUser?.email}</div>
               <div style={{ fontSize: '0.72rem', color: isAdmin ? '#f59e0b' : '#818cf8', fontWeight: '700', textTransform: 'uppercase' }}>
-                {isAdmin ? '👑 Admin Role' : '👤 Employee Role'}
+                {isAdmin ? '👑 Admin Panel' : '👤 Employee View'}
               </div>
             </div>
           </div>
@@ -183,53 +188,44 @@ function MainApp() {
         </div>
       </header>
 
-      {/* Role Access Banner Notice */}
-      {!isAdmin && (
-        <div style={{ 
-          background: 'rgba(59, 130, 246, 0.12)', 
-          border: '1px solid rgba(59, 130, 246, 0.3)', 
-          borderRadius: '12px', 
-          padding: '0.75rem 1rem', 
-          marginBottom: '1.5rem',
-          fontSize: '0.85rem',
-          color: 'var(--text-main)',
-          display: 'flex',
-          alignItems: 'center',
-          gap: '0.6rem'
-        }}>
-          <Info size={18} color="#3b82f6" />
-          <span>You are signed in as an <strong>Employee</strong>. You can mark your daily attendance and view the monthly register. Administrative controls are restricted to Admins.</span>
-        </div>
-      )}
+      {/* RENDER EMPLOYEE PORTAL IF EMPLOYEE ROLE */}
+      {!isAdmin ? (
+        <EmployeePortal 
+          currentUser={currentUser}
+          employees={employees}
+          attendanceData={attendanceData}
+          selectedMonth={selectedMonth}
+          setSelectedMonth={setSelectedMonth}
+        />
+      ) : (
+        /* RENDER ADMIN CONTROLS IF ADMIN ROLE */
+        <>
+          {/* Navigation Tabs for Admin */}
+          <div className="glass-panel" style={{ padding: '0.5rem', borderRadius: '12px', marginBottom: '1.5rem', display: 'flex', gap: '0.5rem' }}>
+            <button 
+              className={`pill-btn ${activeTab === 'mark' ? 'active' : ''}`}
+              onClick={() => setActiveTab('mark')}
+              style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}
+            >
+              <Calendar size={16} /> Mark Attendance
+            </button>
 
-      {/* Navigation Tabs */}
-      <div className="glass-panel" style={{ padding: '0.5rem', borderRadius: '12px', marginBottom: '1.5rem', display: 'flex', gap: '0.5rem' }}>
-        <button 
-          className={`pill-btn ${activeTab === 'mark' ? 'active' : ''}`}
-          onClick={() => setActiveTab('mark')}
-          style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}
-        >
-          <Calendar size={16} /> Mark Attendance
-        </button>
+            <button 
+              className={`pill-btn ${activeTab === 'register' ? 'active' : ''}`}
+              onClick={() => setActiveTab('register')}
+              style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}
+            >
+              <CalendarDays size={16} /> Monthly Register
+            </button>
 
-        <button 
-          className={`pill-btn ${activeTab === 'register' ? 'active' : ''}`}
-          onClick={() => setActiveTab('register')}
-          style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}
-        >
-          <CalendarDays size={16} /> Monthly Register
-        </button>
-
-        {isAdmin && (
-          <button 
-            className={`pill-btn ${activeTab === 'employees' ? 'active' : ''}`}
-            onClick={() => setActiveTab('employees')}
-            style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}
-          >
-            <Users size={16} /> Employees ({employees.length})
-          </button>
-        )}
-      </div>
+            <button 
+              className={`pill-btn ${activeTab === 'employees' ? 'active' : ''}`}
+              onClick={() => setActiveTab('employees')}
+              style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}
+            >
+              <Users size={16} /> Employees ({employees.length})
+            </button>
+          </div>
 
       {/* TAB 1: MARK ATTENDANCE */}
       {activeTab === 'mark' && (
@@ -496,6 +492,8 @@ function MainApp() {
             </table>
           </div>
         </div>
+      )}
+        </>
       )}
 
     </div>
