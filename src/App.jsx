@@ -92,7 +92,7 @@ function MainApp({ isForceAdminRoute }) {
     };
   }, [isFirebaseConfigured]);
 
-  // Mark status in local state for selectedDate
+  // Mark status in local state and Firestore for selectedDate
   const handleStatusChange = useCallback((empId, status) => {
     if (!isAdmin) return;
 
@@ -103,6 +103,9 @@ function MainApp({ isForceAdminRoute }) {
         [empId]: status
       }
     }));
+
+    // Auto save single record to Firestore attendance/{selectedDate}
+    saveAttendanceRecord(selectedDate, empId, status);
   }, [isAdmin, selectedDate]);
 
   // Save Attendance to Firestore for selectedDate
@@ -112,7 +115,8 @@ function MainApp({ isForceAdminRoute }) {
 
     try {
       const currentDayMap = attendanceData[selectedDate] || {};
-      await saveDailyAttendance(selectedDate, { [selectedDate]: currentDayMap });
+      // Writes { [empId]: status } directly into doc(db, 'attendance', selectedDate)
+      await saveDailyAttendance(selectedDate, currentDayMap);
       setToastMessage(`Attendance saved successfully for ${selectedDate}!`);
     } catch (err) {
       console.error(err);

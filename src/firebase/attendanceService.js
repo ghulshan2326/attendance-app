@@ -9,34 +9,35 @@ import {
 } from 'firebase/firestore';
 
 // Save or Update Entire Attendance Map for a specific date in Firestore
-export const saveDailyAttendance = async (dateStr, attendanceMap) => {
+// Writes directly to top-level collection 'attendance' -> Document 'YYYY-MM-DD' -> Fields: { employeeUID: status }
+export const saveDailyAttendance = async (dateStr, dayAttendanceMap) => {
   if (!isFirebaseConfigured() || !db) return;
 
   try {
     const docRef = doc(db, 'attendance', dateStr);
-    await setDoc(docRef, attendanceMap, { merge: true });
-    console.log(`💾 [Attendance Saved] Date: "${dateStr}"`, attendanceMap);
+    await setDoc(docRef, dayAttendanceMap, { merge: true });
+    console.log(`💾 [Firestore Saved] Path: "attendance/${dateStr}", Data:`, dayAttendanceMap);
   } catch (error) {
     console.error("❌ Error saving attendance to Firestore:", error);
     throw error;
   }
 };
 
-// Save individual attendance status for an employee on a date
-export const saveAttendanceRecord = async (dateStr, empId, status) => {
+// Save individual attendance status for an employee on a date into 'attendance/{dateStr}'
+export const saveAttendanceRecord = async (dateStr, empKey, status) => {
   if (!isFirebaseConfigured() || !db) return;
 
-  const key = String(empId);
+  const key = String(empKey);
   try {
     const docRef = doc(db, 'attendance', dateStr);
     await setDoc(docRef, { [key]: status }, { merge: true });
-    console.log(`💾 [Attendance Single Save] Date: "${dateStr}", EmpID: "${key}", Status: "${status}"`);
+    console.log(`💾 [Firestore Single Save] Path: "attendance/${dateStr}", Field: "${key}", Status: "${status}"`);
   } catch (error) {
     console.error("❌ Error saving single attendance to Firestore:", error);
   }
 };
 
-// Single, performance-optimized real-time listener for attendance collection
+// Real-time listener for top-level 'attendance' collection
 export const subscribeToAttendance = (callback) => {
   if (!isFirebaseConfigured() || !db) return () => {};
 
@@ -49,7 +50,7 @@ export const subscribeToAttendance = (callback) => {
       });
       callback(data);
     }, (error) => {
-      console.error("❌ Error subscribing to attendance:", error);
+      console.error("❌ Error subscribing to attendance collection:", error);
     });
   } catch (error) {
     console.error("Error setting up attendance listener:", error);
@@ -118,7 +119,7 @@ export const deleteEmployeeFromFirestore = async (empId, email) => {
   }
 };
 
-// Optimized single real-time listener for 'employees' collection
+// Real-time listener for 'employees' collection
 export const subscribeToEmployees = (callback) => {
   if (!isFirebaseConfigured() || !db) return () => {};
 
