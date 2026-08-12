@@ -1,16 +1,14 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { db, isFirebaseConfigured } from '../firebase/config';
+import { doc, getDoc } from 'firebase/firestore';
 import { 
   User, 
-  Calendar, 
   CalendarDays, 
-  TrendingUp, 
   CheckCircle2, 
   Clock, 
   XCircle, 
   AlertCircle, 
   ShieldCheck, 
-  Award, 
-  Info,
   Building,
   Briefcase
 } from 'lucide-react';
@@ -22,11 +20,50 @@ export default function EmployeePortal({
   selectedMonth, 
   setSelectedMonth 
 }) {
-  // Find current employee record matching user displayName or email, default to first employee
-  const currentEmployee = employees.find(emp => 
-    (emp.name && currentUser?.displayName && emp.name.toLowerCase() === currentUser.displayName.toLowerCase()) ||
-    (emp.email && currentUser?.email && emp.email.toLowerCase() === currentUser.email.toLowerCase())
-  ) || employees[0] || { id: 1, name: currentUser?.displayName || 'Employee', designation: 'Team Member', department: 'General' };
+  // Live state for current employee's profile from Firestore users/{uid}
+  const [profile, setProfile] = useState({
+    id: currentUser?.uid || '',
+    name: currentUser?.name || currentUser?.displayName || currentUser?.email?.split('@')[0] || 'Employee',
+    designation: currentUser?.designation || 'Team Member',
+    department: currentUser?.department || 'General',
+    email: currentUser?.email || ''
+  });
+
+  // Fetch Firestore document users/{currentUser.uid} on mount/currentUser change
+  useEffect(() => {
+    if (!currentUser?.uid || !db || !isFirebaseConfigured()) return;
+
+    const fetchUserProfile = async () => {
+      try {
+        const userDocRef = doc(db, 'users', currentUser.uid);
+        const userSnap = await getDoc(userDocRef);
+        if (userSnap.exists()) {
+          const data = userSnap.data();
+          setProfile({
+            id: currentUser.uid,
+            name: data.name || currentUser.displayName || currentUser.email.split('@')[0],
+            designation: data.designation || 'Team Member',
+            department: data.department || 'General',
+            email: data.email || currentUser.email
+          });
+        }
+      } catch (err) {
+        console.error("Error fetching user profile in EmployeePortal:", err);
+      }
+    };
+
+    fetchUserProfile();
+  }, [currentUser]);
+
+  // Match corresponding employee entry in roster if present
+  const rosterEmp = employees.find(emp => 
+    (emp.uid && emp.uid === currentUser?.uid) ||
+    (emp.id && String(emp.id) === String(currentUser?.uid)) ||
+    (emp.email && currentUser?.email && emp.email.toLowerCase() === currentUser.email.toLowerCase()) ||
+    (emp.name && profile.name && emp.name.toLowerCase() === profile.name.toLowerCase())
+  );
+
+  const activeEmpId = rosterEmp?.id || profile.id || currentUser?.uid;
 
   // Calculate monthly days
   const getDaysInMonth = (yearMonthStr) => {
@@ -45,16 +82,15 @@ export default function EmployeePortal({
 
   const monthDays = getDaysInMonth(selectedMonth);
 
-  // Calculate stats for the current employee
+  // Calculate stats for this specific logged-in employee
   let totalRecorded = 0;
   let presentCount = 0;
   let lateCount = 0;
   let absentCount = 0;
   let leaveCount = 0;
 
-  // Search through all dates in attendanceData for this employee
   Object.keys(attendanceData).forEach(dateStr => {
-    const status = attendanceData[dateStr]?.[currentEmployee.id];
+    const status = attendanceData[dateStr]?.[activeEmpId] || attendanceData[dateStr]?.[currentUser?.uid] || (rosterEmp ? attendanceData[dateStr]?.[rosterEmp.id] : null);
     if (status) {
       totalRecorded++;
       if (status === 'P') presentCount++;
@@ -125,7 +161,7 @@ export default function EmployeePortal({
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
           <ShieldCheck size={20} color="#818cf8" />
           <span>
-            <strong>Employee View Portal:</strong> You are viewing your personal attendance record in <strong>Strictly View-Only Mode</strong>. Attendance modifications are reserved for Admins.
+            <strong>Employee View Portal:</strong> You are viewing your personal attendance record in <strong>Strictly View-Only Mode</strong>. Administrative modifications are reserved for Admins.
           </span>
         </div>
         <span className="badge" style={{ background: 'rgba(129, 140, 248, 0.2)', color: '#a5b4fc', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
@@ -151,15 +187,20 @@ export default function EmployeePortal({
           </div>
           <div>
             <h2 style={{ fontSize: '1.35rem', fontWeight: '800', margin: 0, color: 'var(--text-main)' }}>
-              {currentEmployee.name}
+              {profile.name}
             </h2>
             <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginTop: '0.4rem', flexWrap: 'wrap', fontSize: '0.85rem', color: 'var(--text-muted)' }}>
               <span style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
-                <Briefcase size={14} color="#818cf8" /> {currentEmployee.designation}
+                <Briefcase size={14} color="#818cf8" /> {rosterEmp?.designation || profile.designation}
               </span>
               <span style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
-                <Building size={14} color="#3b82f6" /> {currentEmployee.department}
+                <Building size={14} color="#3b82f6" /> {rosterEmp?.department || profile.department}
               </span>
+              {profile.email && (
+                <span style={{ opacity: 0.75 }}>
+                  ({profile.email})
+                </span>
+              )}
             </div>
           </div>
         </div>
@@ -210,7 +251,7 @@ export default function EmployeePortal({
               <CalendarDays size={20} color="#818cf8" /> My Attendance History
             </h3>
             <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', margin: '0.2rem 0 0 0' }}>
-              View-only register for your account ({currentEmployee.name})
+              View-only register for {profile.name}
             </p>
           </div>
 
@@ -247,7 +288,7 @@ export default function EmployeePortal({
             </thead>
             <tbody>
               {monthDays.map(({ dayNum, dateStr, dayName }) => {
-                const status = attendanceData[dateStr]?.[currentEmployee.id] || '';
+                const status = attendanceData[dateStr]?.[activeEmpId] || attendanceData[dateStr]?.[currentUser?.uid] || (rosterEmp ? attendanceData[dateStr]?.[rosterEmp.id] : '');
                 const isWeekend = dayName === 'Sat' || dayName === 'Sun';
 
                 return (

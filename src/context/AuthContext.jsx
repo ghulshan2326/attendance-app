@@ -28,20 +28,39 @@ export function AuthProvider({ children }) {
   const [userRole, setUserRole] = useState(null); // 'admin' | 'employee'
   const [loading, setLoading] = useState(true);
 
-  // Helper to fetch user role strictly from Firestore
-  const fetchUserRoleFromFirestore = async (user) => {
-    if (!isFirebaseConfigured() || !db || !user) return 'employee';
+  // Helper to fetch complete user profile strictly from Firestore users/{uid}
+  const fetchUserProfileFromFirestore = async (user) => {
+    const defaultProfile = {
+      uid: user?.uid || '',
+      email: user?.email || '',
+      displayName: user?.displayName || user?.email?.split('@')[0] || 'Employee',
+      name: user?.displayName || user?.email?.split('@')[0] || 'Employee',
+      role: 'employee',
+      designation: 'Team Member',
+      department: 'General'
+    };
+
+    if (!isFirebaseConfigured() || !db || !user) return defaultProfile;
+
     try {
       const userDocRef = doc(db, 'users', user.uid);
       const userDocSnap = await getDoc(userDocRef);
       if (userDocSnap.exists()) {
         const data = userDocSnap.data();
-        return data.role === 'admin' ? 'admin' : 'employee';
+        return {
+          uid: user.uid,
+          email: user.email,
+          displayName: data.name || user.displayName || user.email.split('@')[0],
+          name: data.name || user.displayName || user.email.split('@')[0],
+          role: data.role === 'admin' ? 'admin' : 'employee',
+          designation: data.designation || 'Team Member',
+          department: data.department || 'General'
+        };
       }
     } catch (err) {
-      console.error("Error fetching user role from Firestore:", err);
+      console.error("Error fetching user profile from Firestore:", err);
     }
-    return 'employee';
+    return defaultProfile;
   };
 
   // Monitor Firebase Auth state
@@ -53,23 +72,9 @@ export function AuthProvider({ children }) {
 
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       if (user) {
-        const role = await fetchUserRoleFromFirestore(user);
-        
-        // Fetch display name from Firestore if available
-        let name = user.displayName || user.email;
-        try {
-          if (db) {
-            const userDocSnap = await getDoc(doc(db, 'users', user.uid));
-            if (userDocSnap.exists() && userDocSnap.data().name) {
-              name = userDocSnap.data().name;
-            }
-          }
-        } catch (e) {
-          // ignore fallback
-        }
-
-        setCurrentUser({ uid: user.uid, email: user.email, displayName: name });
-        setUserRole(role);
+        const profile = await fetchUserProfileFromFirestore(user);
+        setCurrentUser(profile);
+        setUserRole(profile.role);
       } else {
         setCurrentUser(null);
         setUserRole(null);
@@ -89,23 +94,11 @@ export function AuthProvider({ children }) {
     const userCredential = await signInWithEmailAndPassword(auth, email, password);
     const user = userCredential.user;
     
-    // Fetch role strictly from Firestore document
-    const role = await fetchUserRoleFromFirestore(user);
-    
-    let name = user.displayName || user.email;
-    try {
-      if (db) {
-        const userDocSnap = await getDoc(doc(db, 'users', user.uid));
-        if (userDocSnap.exists() && userDocSnap.data().name) {
-          name = userDocSnap.data().name;
-        }
-      }
-    } catch (e) {
-      // ignore
-    }
+    // Fetch profile strictly from Firestore document users/{user.uid}
+    const profile = await fetchUserProfileFromFirestore(user);
 
-    setCurrentUser({ uid: user.uid, email: user.email, displayName: name });
-    setUserRole(role);
+    setCurrentUser(profile);
+    setUserRole(profile.role);
     return user;
   };
 
@@ -118,18 +111,22 @@ export function AuthProvider({ children }) {
     const userCredential = await createUserWithEmailAndPassword(auth, email, password);
     const user = userCredential.user;
 
-    // Save user profile with role hardcoded as 'employee' in Firestore 'users' collection
+    const newProfile = {
+      uid: user.uid,
+      name: name.trim(),
+      email: email.trim(),
+      role: 'employee', // Always default to employee. Only manual Firestore edit grants admin.
+      designation: 'Team Member',
+      department: 'General',
+      createdAt: new Date().toISOString()
+    };
+
+    // Save user profile in Firestore 'users' collection with user.uid as document key
     if (db) {
-      await setDoc(doc(db, 'users', user.uid), {
-        uid: user.uid,
-        name: name.trim(),
-        email: email.trim(),
-        role: 'employee', // Always default to employee. Only manual Firestore edit grants admin.
-        createdAt: new Date().toISOString()
-      });
+      await setDoc(doc(db, 'users', user.uid), newProfile);
     }
 
-    setCurrentUser({ uid: user.uid, email, displayName: name });
+    setCurrentUser({ ...newProfile, displayName: name.trim() });
     setUserRole('employee');
     return user;
   };
