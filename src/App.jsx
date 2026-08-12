@@ -6,7 +6,7 @@ import EmployeePortal from './components/EmployeePortal';
 import { 
   saveAttendanceRecord, 
   subscribeToAttendance, 
-  addEmployeeToFirestore, 
+  inviteEmployeeToFirestore, 
   deleteEmployeeFromFirestore, 
   subscribeToEmployees 
 } from './firebase/attendanceService';
@@ -19,16 +19,13 @@ import {
   Trash2,
   LogOut,
   Shield,
-  User
+  User,
+  Mail,
+  CheckCircle2,
+  Clock
 } from 'lucide-react';
 
-const INITIAL_EMPLOYEES = [
-  { id: 1, name: 'Munibah Khan', designation: 'Software Engineer', department: 'Engineering' },
-  { id: 2, name: 'Ayesha Ahmed', designation: 'UI Designer', department: 'Design' },
-  { id: 3, name: 'Zaid Bilal', designation: 'Backend Developer', department: 'Engineering' },
-  { id: 4, name: 'Sarah Jenkins', designation: 'Project Manager', department: 'Management' },
-  { id: 5, name: 'Tariq Mahmood', designation: 'QA Engineer', department: 'Quality Assurance' },
-];
+const INITIAL_EMPLOYEES = [];
 
 function MainApp({ isForceAdminRoute }) {
   const { currentUser, userRole, logout, isFirebaseConfigured } = useAuth();
@@ -37,20 +34,18 @@ function MainApp({ isForceAdminRoute }) {
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
   const [selectedMonth, setSelectedMonth] = useState('2026-08');
 
-  // Employee roster
+  // Employee roster (Populated dynamically from Firestore 'users' and 'invitedEmployees')
   const [employees, setEmployees] = useState(INITIAL_EMPLOYEES);
 
   // New Employee form state
   const [newEmpName, setNewEmpName] = useState('');
+  const [newEmpEmail, setNewEmpEmail] = useState('');
   const [newEmpRole, setNewEmpRole] = useState('');
   const [newEmpDept, setNewEmpDept] = useState('Engineering');
+  const [inviteSuccessMsg, setInviteSuccessMsg] = useState('');
 
   // Attendance store
-  const [attendanceData, setAttendanceData] = useState({
-    [new Date().toISOString().split('T')[0]]: {
-      1: 'P', 2: 'P', 3: 'L', 4: 'A', 5: 'H'
-    }
-  });
+  const [attendanceData, setAttendanceData] = useState({});
 
   // Admin access granted if logged in through /admin route OR userRole is 'admin' in Firestore
   const isAdmin = isForceAdminRoute || userRole === 'admin';
@@ -64,9 +59,7 @@ function MainApp({ isForceAdminRoute }) {
     });
 
     const unsubEmployees = subscribeToEmployees((list) => {
-      if (list && list.length > 0) {
-        setEmployees(list);
-      }
+      setEmployees(list || []);
     });
 
     return () => {
@@ -91,31 +84,36 @@ function MainApp({ isForceAdminRoute }) {
     await saveAttendanceRecord(selectedDate, empId, status);
   };
 
-  // Add new employee (Admin Only)
+  // Invite new employee by Email (Admin Only)
   const handleAddEmployee = async (e) => {
     e.preventDefault();
     if (!isAdmin) return;
-    if (!newEmpName.trim()) return;
+    if (!newEmpName.trim() || !newEmpEmail.trim()) return;
 
-    const newEmp = {
-      id: Date.now(),
+    setInviteSuccessMsg('');
+
+    const empData = {
       name: newEmpName.trim(),
+      email: newEmpEmail.toLowerCase().trim(),
       designation: newEmpRole.trim() || 'Team Member',
       department: newEmpDept
     };
 
-    setEmployees(prev => [...prev, newEmp]);
-    setNewEmpName('');
-    setNewEmpRole('');
-
-    await addEmployeeToFirestore(newEmp);
+    try {
+      await inviteEmployeeToFirestore(empData);
+      setInviteSuccessMsg(`Invitation sent! ${newEmpEmail.toLowerCase().trim()} can now sign up on the registration page.`);
+      setNewEmpName('');
+      setNewEmpEmail('');
+      setNewEmpRole('');
+    } catch (err) {
+      console.error(err);
+    }
   };
 
-  // Remove employee (Admin Only)
-  const handleRemoveEmployee = async (id) => {
+  // Remove employee or revoke pending invite (Admin Only)
+  const handleRemoveEmployee = async (emp) => {
     if (!isAdmin) return;
-    setEmployees(prev => prev.filter(e => e.id !== id));
-    await deleteEmployeeFromFirestore(id);
+    await deleteEmployeeFromFirestore(emp.id || emp.uid, emp.email);
   };
 
   // Calculate daily statistics for selectedDate
@@ -254,7 +252,7 @@ function MainApp({ isForceAdminRoute }) {
                   <span className="badge badge-late">Late: {totalLate}</span>
                   <span className="badge badge-absent">Absent: {totalAbsent}</span>
                   <span className="badge badge-leave">Leave: {totalLeave}</span>
-                  <span className="badge" style={{ background: 'rgba(255,255,255,0.08)', color: 'var(--text-main)' }}>Total: {employees.length}</span>
+                  <span className="badge" style={{ background: 'rgba(255,255,255,0.08)', color: 'var(--text-main)' }}>Total Staff: {employees.length}</span>
                 </div>
               </div>
 
@@ -270,51 +268,60 @@ function MainApp({ isForceAdminRoute }) {
                     </tr>
                   </thead>
                   <tbody>
-                    {employees.map((emp, index) => {
-                      const status = currentDayRecords[emp.id] || '';
-                      return (
-                        <tr key={emp.id}>
-                          <td style={{ color: 'var(--text-dim)', fontWeight: '600' }}>{index + 1}</td>
-                          <td>
-                            <div style={{ fontWeight: '700', color: 'var(--text-main)' }}>{emp.name}</div>
-                          </td>
-                          <td style={{ color: 'var(--text-muted)' }}>{emp.designation}</td>
-                          <td>
-                            <span className="badge" style={{ background: 'rgba(255,255,255,0.06)', color: 'var(--text-muted)' }}>
-                              {emp.department}
-                            </span>
-                          </td>
-                          <td>
-                            <div className="status-selector" style={{ margin: '0 auto' }}>
-                              <button 
-                                className={`status-btn present ${status === 'P' ? 'active' : ''}`}
-                                onClick={() => handleStatusChange(emp.id, 'P')}
-                              >
-                                Present (P)
-                              </button>
-                              <button 
-                                className={`status-btn late ${status === 'L' ? 'active' : ''}`}
-                                onClick={() => handleStatusChange(emp.id, 'L')}
-                              >
-                                Late (L)
-                              </button>
-                              <button 
-                                className={`status-btn absent ${status === 'A' ? 'active' : ''}`}
-                                onClick={() => handleStatusChange(emp.id, 'A')}
-                              >
-                                Absent (A)
-                              </button>
-                              <button 
-                                className={`status-btn leave ${status === 'H' ? 'active' : ''}`}
-                                onClick={() => handleStatusChange(emp.id, 'H')}
-                              >
-                                Leave (H)
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
-                      );
-                    })}
+                    {employees.length === 0 ? (
+                      <tr>
+                        <td colSpan="5" style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-dim)' }}>
+                          No employees found. Invite an employee under the <strong>Employees</strong> tab!
+                        </td>
+                      </tr>
+                    ) : (
+                      employees.map((emp, index) => {
+                        const status = currentDayRecords[emp.id] || '';
+                        return (
+                          <tr key={emp.id}>
+                            <td style={{ color: 'var(--text-dim)', fontWeight: '600' }}>{index + 1}</td>
+                            <td>
+                              <div style={{ fontWeight: '700', color: 'var(--text-main)' }}>{emp.name}</div>
+                              {emp.email && <div style={{ fontSize: '0.78rem', color: 'var(--text-dim)' }}>{emp.email}</div>}
+                            </td>
+                            <td style={{ color: 'var(--text-muted)' }}>{emp.designation}</td>
+                            <td>
+                              <span className="badge" style={{ background: 'rgba(255,255,255,0.06)', color: 'var(--text-muted)' }}>
+                                {emp.department}
+                              </span>
+                            </td>
+                            <td>
+                              <div className="status-selector" style={{ margin: '0 auto' }}>
+                                <button 
+                                  className={`status-btn present ${status === 'P' ? 'active' : ''}`}
+                                  onClick={() => handleStatusChange(emp.id, 'P')}
+                                >
+                                  Present (P)
+                                </button>
+                                <button 
+                                  className={`status-btn late ${status === 'L' ? 'active' : ''}`}
+                                  onClick={() => handleStatusChange(emp.id, 'L')}
+                                >
+                                  Late (L)
+                                </button>
+                                <button 
+                                  className={`status-btn absent ${status === 'A' ? 'active' : ''}`}
+                                  onClick={() => handleStatusChange(emp.id, 'A')}
+                                >
+                                  Absent (A)
+                                </button>
+                                <button 
+                                  className={`status-btn leave ${status === 'H' ? 'active' : ''}`}
+                                  onClick={() => handleStatusChange(emp.id, 'H')}
+                                >
+                                  Leave (H)
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })
+                    )}
                   </tbody>
                 </table>
               </div>
@@ -367,59 +374,98 @@ function MainApp({ isForceAdminRoute }) {
                     </tr>
                   </thead>
                   <tbody>
-                    {employees.map(emp => {
-                      let monthP = 0;
-                      let monthA = 0;
+                    {employees.length === 0 ? (
+                      <tr>
+                        <td colSpan={daysInMonth.length + 3} style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-dim)' }}>
+                          No employee records found.
+                        </td>
+                      </tr>
+                    ) : (
+                      employees.map(emp => {
+                        let monthP = 0;
+                        let monthA = 0;
 
-                      return (
-                        <tr key={emp.id}>
-                          <td style={{ position: 'sticky', left: 0, background: '#121826', zIndex: 1, fontWeight: '700' }}>
-                            {emp.name}
-                          </td>
-                          {daysInMonth.map(day => {
-                            const dayStr = `${selectedMonth}-${day < 10 ? '0' + day : day}`;
-                            const st = attendanceData[dayStr]?.[emp.id] || '-';
-                            
-                            if (st === 'P') monthP++;
-                            if (st === 'A') monthA++;
+                        return (
+                          <tr key={emp.id}>
+                            <td style={{ position: 'sticky', left: 0, background: '#121826', zIndex: 1, fontWeight: '700' }}>
+                              {emp.name}
+                            </td>
+                            {daysInMonth.map(day => {
+                              const dayStr = `${selectedMonth}-${day < 10 ? '0' + day : day}`;
+                              const st = attendanceData[dayStr]?.[emp.id] || '-';
+                              
+                              if (st === 'P') monthP++;
+                              if (st === 'A') monthA++;
 
-                            let color = 'var(--text-dim)';
-                            if (st === 'P') color = 'var(--status-present)';
-                            if (st === 'A') color = 'var(--status-absent)';
-                            if (st === 'L') color = 'var(--status-late)';
-                            if (st === 'H') color = 'var(--status-leave)';
+                              let color = 'var(--text-dim)';
+                              if (st === 'P') color = 'var(--status-present)';
+                              if (st === 'A') color = 'var(--status-absent)';
+                              if (st === 'L') color = 'var(--status-late)';
+                              if (st === 'H') color = 'var(--status-leave)';
 
-                            return (
-                              <td key={day} style={{ textAlign: 'center', padding: '0.5rem 0.2rem', fontWeight: '700', color }}>
-                                {st}
-                              </td>
-                            );
-                          })}
-                          <td style={{ textAlign: 'center', fontWeight: '800', color: 'var(--status-present)' }}>{monthP}</td>
-                          <td style={{ textAlign: 'center', fontWeight: '800', color: 'var(--status-absent)' }}>{monthA}</td>
-                        </tr>
-                      );
-                    })}
+                              return (
+                                <td key={day} style={{ textAlign: 'center', padding: '0.5rem 0.2rem', fontWeight: '700', color }}>
+                                  {st}
+                                </td>
+                              );
+                            })}
+                            <td style={{ textAlign: 'center', fontWeight: '800', color: 'var(--status-present)' }}>{monthP}</td>
+                            <td style={{ textAlign: 'center', fontWeight: '800', color: 'var(--status-absent)' }}>{monthA}</td>
+                          </tr>
+                        );
+                      })
+                    )}
                   </tbody>
                 </table>
               </div>
             </div>
           )}
 
-          {/* TAB 3: EMPLOYEES (Admin Only) */}
+          {/* TAB 3: EMPLOYEES (Admin Only Invite & Manage) */}
           {activeTab === 'employees' && isAdmin && (
             <div>
               <div className="glass-panel controls-bar" style={{ marginBottom: '1.5rem' }}>
-                <h3 style={{ fontSize: '1.05rem', fontWeight: '700', marginBottom: '1rem' }}>Add New Employee</h3>
-                <form onSubmit={handleAddEmployee} style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1rem', alignItems: 'end' }}>
+                <h3 style={{ fontSize: '1.05rem', fontWeight: '700', marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <UserPlus size={18} color="#f59e0b" /> Invite New Employee by Email
+                </h3>
+
+                {inviteSuccessMsg && (
+                  <div style={{ 
+                    background: 'rgba(16, 185, 129, 0.15)', 
+                    border: '1px solid rgba(16, 185, 129, 0.3)', 
+                    borderRadius: '8px', 
+                    padding: '0.75rem 1rem', 
+                    color: 'var(--status-present)', 
+                    fontSize: '0.85rem',
+                    marginBottom: '1rem',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '0.5rem'
+                  }}>
+                    <CheckCircle2 size={16} /> {inviteSuccessMsg}
+                  </div>
+                )}
+
+                <form onSubmit={handleAddEmployee} style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '1rem', alignItems: 'end' }}>
                   <div className="form-group" style={{ marginBottom: 0 }}>
-                    <label>Employee Name</label>
+                    <label>Full Name</label>
                     <input 
                       type="text" 
                       required
-                      placeholder="e.g. Ali Raza"
+                      placeholder="e.g. John Doe"
                       value={newEmpName}
                       onChange={(e) => setNewEmpName(e.target.value)}
+                    />
+                  </div>
+
+                  <div className="form-group" style={{ marginBottom: 0 }}>
+                    <label>Email Address</label>
+                    <input 
+                      type="email" 
+                      required
+                      placeholder="john@company.com"
+                      value={newEmpEmail}
+                      onChange={(e) => setNewEmpEmail(e.target.value)}
                     />
                   </div>
 
@@ -447,8 +493,8 @@ function MainApp({ isForceAdminRoute }) {
                     </select>
                   </div>
 
-                  <button type="submit" className="btn btn-primary" style={{ height: '42px', justifyContent: 'center' }}>
-                    <UserPlus size={16} /> Add Employee
+                  <button type="submit" className="btn btn-primary" style={{ height: '42px', justifyContent: 'center', background: 'linear-gradient(135deg, #f59e0b, #d97706)' }}>
+                    <Mail size={16} /> Send Email Invite
                   </button>
                 </form>
               </div>
@@ -458,35 +504,58 @@ function MainApp({ isForceAdminRoute }) {
                   <thead>
                     <tr>
                       <th>#</th>
-                      <th>Name</th>
+                      <th>Name & Email</th>
                       <th>Designation</th>
                       <th>Department</th>
+                      <th>Onboarding Status</th>
                       <th style={{ textAlign: 'right' }}>Action</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {employees.map((emp, idx) => (
-                      <tr key={emp.id}>
-                        <td style={{ color: 'var(--text-dim)', fontWeight: '600' }}>{idx + 1}</td>
-                        <td style={{ fontWeight: '700', color: 'var(--text-main)' }}>{emp.name}</td>
-                        <td style={{ color: 'var(--text-muted)' }}>{emp.designation}</td>
-                        <td>
-                          <span className="badge" style={{ background: 'rgba(255,255,255,0.06)', color: 'var(--text-muted)' }}>
-                            {emp.department}
-                          </span>
-                        </td>
-                        <td style={{ textAlign: 'right' }}>
-                          <button 
-                            className="btn-icon-only"
-                            style={{ color: 'var(--status-absent)', borderColor: 'rgba(239, 68, 68, 0.2)' }}
-                            onClick={() => handleRemoveEmployee(emp.id)}
-                            title="Remove Employee"
-                          >
-                            <Trash2 size={16} />
-                          </button>
+                    {employees.length === 0 ? (
+                      <tr>
+                        <td colSpan="6" style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-dim)' }}>
+                          No employees invited or registered yet. Use the form above to invite your team!
                         </td>
                       </tr>
-                    ))}
+                    ) : (
+                      employees.map((emp, idx) => (
+                        <tr key={emp.id}>
+                          <td style={{ color: 'var(--text-dim)', fontWeight: '600' }}>{idx + 1}</td>
+                          <td>
+                            <div style={{ fontWeight: '700', color: 'var(--text-main)' }}>{emp.name}</div>
+                            {emp.email && <div style={{ fontSize: '0.78rem', color: 'var(--text-dim)' }}>{emp.email}</div>}
+                          </td>
+                          <td style={{ color: 'var(--text-muted)' }}>{emp.designation}</td>
+                          <td>
+                            <span className="badge" style={{ background: 'rgba(255,255,255,0.06)', color: 'var(--text-muted)' }}>
+                              {emp.department}
+                            </span>
+                          </td>
+                          <td>
+                            {emp.accountStatus === 'active' ? (
+                              <span className="badge badge-present" style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem' }}>
+                                <CheckCircle2 size={13} /> Active
+                              </span>
+                            ) : (
+                              <span className="badge badge-late" style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem' }}>
+                                <Clock size={13} /> Pending Invite
+                              </span>
+                            )}
+                          </td>
+                          <td style={{ textAlign: 'right' }}>
+                            <button 
+                              className="btn-icon-only"
+                              style={{ color: 'var(--status-absent)', borderColor: 'rgba(239, 68, 68, 0.2)' }}
+                              onClick={() => handleRemoveEmployee(emp)}
+                              title={emp.accountStatus === 'active' ? 'Remove Employee' : 'Revoke Invitation'}
+                            >
+                              <Trash2 size={16} />
+                            </button>
+                          </td>
+                        </tr>
+                      ))
+                    )}
                   </tbody>
                 </table>
               </div>

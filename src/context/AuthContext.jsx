@@ -35,7 +35,6 @@ export function AuthProvider({ children }) {
       return null;
     }
 
-    // LOG CURRENT USER UID FOR AUDITING
     console.log(`🔍 [Auth] Fetching Firestore document at path: "users/${user.uid}" (Email: ${user.email})`);
 
     const defaultProfile = {
@@ -117,7 +116,7 @@ export function AuthProvider({ children }) {
     }
 
     console.log(`🔐 [Auth] Attempting login for email: "${email}"...`);
-    const userCredential = await signInWithEmailAndPassword(auth, email, password);
+    const userCredential = await signInWithEmailAndPassword(auth, email.trim(), password);
     const user = userCredential.user;
     
     console.log(`🔑 [Auth] Authentication successful! Logged-in Auth UID: "${user.uid}"`);
@@ -130,35 +129,65 @@ export function AuthProvider({ children }) {
     return user;
   };
 
-  // Secure Sign-Up handler (All new sign-ups default STRICTLY to 'employee')
+  // Restricted Sign-Up handler (Requires valid pending invitation in 'invitedEmployees' collection)
   const signup = async (email, password, name) => {
     if (!isFirebaseConfigured()) {
       throw new Error("Firebase is not configured yet. Please configure Firebase keys.");
     }
 
-    console.log(`📝 [Auth] Creating new account for: "${email}"...`);
-    const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+    const normalizedEmail = email.toLowerCase().trim();
+    console.log(`📝 [Auth] Verifying invitation for: "${normalizedEmail}"...`);
+
+    // 1. Check if email exists in 'invitedEmployees' collection with status: 'pending'
+    let inviteData = null;
+    if (db) {
+      const inviteRef = doc(db, 'invitedEmployees', normalizedEmail);
+      const inviteSnap = await getDoc(inviteRef);
+      if (inviteSnap.exists()) {
+        const data = inviteSnap.data();
+        if (data.status === 'pending') {
+          inviteData = data;
+        }
+      }
+    }
+
+    if (!inviteData) {
+      throw new Error("This email is not authorized. Please contact your admin.");
+    }
+
+    console.log(`✅ [Auth] Valid pending invite found for "${normalizedEmail}". Proceeding with account creation...`, inviteData);
+
+    // 2. Create Firebase Auth user
+    const userCredential = await createUserWithEmailAndPassword(auth, normalizedEmail, password);
     const user = userCredential.user;
 
     console.log(`✨ [Auth] Account created! New Auth UID: "${user.uid}"`);
 
     const newProfile = {
       uid: user.uid,
-      name: name.trim(),
-      email: email.trim(),
-      role: 'employee', // Always default to employee. Only manual Firestore edit grants admin.
-      designation: 'Team Member',
-      department: 'General',
+      name: name.trim() || inviteData.name || normalizedEmail.split('@')[0],
+      email: normalizedEmail,
+      role: 'employee',
+      designation: inviteData.designation || 'Team Member',
+      department: inviteData.department || 'General',
       createdAt: new Date().toISOString()
     };
 
-    // Save user profile in Firestore 'users' collection with user.uid as document key
     if (db) {
-      console.log(`💾 [Auth] Writing new user document at path: "users/${user.uid}"`);
+      // 3. Save profile in 'users' collection using user.uid
+      console.log(`💾 [Auth] Writing new user profile at path: "users/${user.uid}"`);
       await setDoc(doc(db, 'users', user.uid), newProfile);
+
+      // 4. Mark invitation as completed in 'invitedEmployees' collection
+      console.log(`🏷️ [Auth] Updating invite status to 'completed' for "${normalizedEmail}"`);
+      await setDoc(doc(db, 'invitedEmployees', normalizedEmail), {
+        status: 'completed',
+        uid: user.uid,
+        completedAt: new Date().toISOString()
+      }, { merge: true });
     }
 
-    setCurrentUser({ ...newProfile, displayName: name.trim() });
+    setCurrentUser({ ...newProfile, displayName: newProfile.name });
     setUserRole('employee');
     return user;
   };
