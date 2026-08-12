@@ -8,21 +8,25 @@ import {
   deleteDoc 
 } from 'firebase/firestore';
 
-// Save or Update Attendance Record in Firestore
+// Save or Update Attendance Record permanently in Firestore
 export const saveAttendanceRecord = async (dateStr, empId, status) => {
   if (!isFirebaseConfigured() || !db) return;
 
+  const key = String(empId);
   try {
     const docRef = doc(db, 'attendance', dateStr);
+    // Writes/merges [key]: status into document 'attendance/{dateStr}'
     await setDoc(docRef, {
-      [empId]: status
+      [key]: status
     }, { merge: true });
+    
+    console.log(`💾 [Firestore Attendance Saved] Date: "${dateStr}", EmpID: "${key}", Status: "${status}"`);
   } catch (error) {
-    console.error("Error saving attendance to Firestore:", error);
+    console.error("❌ Error saving attendance to Firestore:", error);
   }
 };
 
-// Real-time listener for attendance records
+// Real-time listener for attendance records across all dates
 export const subscribeToAttendance = (callback) => {
   if (!isFirebaseConfigured() || !db) return () => {};
 
@@ -33,10 +37,13 @@ export const subscribeToAttendance = (callback) => {
       snapshot.forEach(docSnap => {
         data[docSnap.id] = docSnap.data();
       });
+      console.log(`📡 [Firestore Sync] Loaded attendance for ${Object.keys(data).length} dates.`);
       callback(data);
+    }, (error) => {
+      console.error("❌ Error subscribing to Firestore attendance:", error);
     });
   } catch (error) {
-    console.error("Error subscribing to Firestore attendance:", error);
+    console.error("Error setting up attendance listener:", error);
     return () => {};
   }
 };
@@ -82,6 +89,7 @@ export const checkEmployeeInvite = async (email) => {
     }
   } catch (error) {
     console.error("Error checking employee invite in Firestore:", error);
+    throw error;
   }
   return null;
 };
