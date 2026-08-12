@@ -1,19 +1,21 @@
 import React, { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { CheckSquare, Lock, Mail, User, Info } from 'lucide-react';
+import { CheckSquare, Lock, Mail, User, Info, CheckCircle2, KeyRound } from 'lucide-react';
 
 export default function Login() {
-  const { login, signup, isFirebaseConfigured } = useAuth();
+  const { login, signup, resetPassword, isFirebaseConfigured } = useAuth();
   const [isSignUp, setIsSignUp] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [name, setName] = useState('');
   const [error, setError] = useState('');
+  const [successMessage, setSuccessMessage] = useState('');
   const [loading, setLoading] = useState(false);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
+    setSuccessMessage('');
     setLoading(true);
 
     try {
@@ -26,6 +28,34 @@ export default function Login() {
     } catch (err) {
       console.error(err);
       setError(err.message || 'Authentication failed. Check your credentials.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Password Reset Handler
+  const handleForgotPassword = async () => {
+    setError('');
+    setSuccessMessage('');
+
+    if (!email.trim()) {
+      setError('Please enter your email address in the field above to receive a password reset link.');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      await resetPassword(email.trim());
+      setSuccessMessage('Password reset link sent to your email, please check your inbox.');
+    } catch (err) {
+      console.error(err);
+      if (err.code === 'auth/user-not-found') {
+        setError('No registered account found with this email address.');
+      } else if (err.code === 'auth/invalid-email') {
+        setError('Please enter a valid email address.');
+      } else {
+        setError(err.message || 'Failed to send password reset email. Please try again.');
+      }
     } finally {
       setLoading(false);
     }
@@ -71,12 +101,30 @@ export default function Login() {
             background: 'rgba(239, 68, 68, 0.15)', 
             border: '1px solid rgba(239, 68, 68, 0.3)', 
             borderRadius: '8px', 
-            padding: '0.75rem', 
+            padding: '0.75rem 1rem', 
             color: 'var(--status-absent)', 
             fontSize: '0.85rem',
             marginBottom: '1.25rem' 
           }}>
             {error}
+          </div>
+        )}
+
+        {successMessage && (
+          <div style={{ 
+            background: 'rgba(16, 185, 129, 0.15)', 
+            border: '1px solid rgba(16, 185, 129, 0.3)', 
+            borderRadius: '8px', 
+            padding: '0.85rem 1rem', 
+            color: 'var(--status-present)', 
+            fontSize: '0.85rem',
+            marginBottom: '1.25rem',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '0.6rem'
+          }}>
+            <CheckCircle2 size={18} style={{ flexShrink: 0 }} />
+            <span>{successMessage}</span>
           </div>
         )}
 
@@ -113,7 +161,7 @@ export default function Login() {
             </div>
           </div>
 
-          <div className="form-group">
+          <div className="form-group" style={{ marginBottom: isSignUp ? '1rem' : '0.4rem' }}>
             <label>Password</label>
             <div style={{ position: 'relative' }}>
               <input 
@@ -128,11 +176,36 @@ export default function Login() {
             </div>
           </div>
 
+          {/* Forgot Password Link */}
+          {!isSignUp && (
+            <div style={{ textAlign: 'right', marginBottom: '1.25rem' }}>
+              <button 
+                type="button"
+                onClick={handleForgotPassword}
+                disabled={loading}
+                style={{ 
+                  background: 'none', 
+                  border: 'none', 
+                  color: '#818cf8', 
+                  fontSize: '0.82rem', 
+                  fontWeight: '600', 
+                  cursor: 'pointer',
+                  padding: 0,
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '0.3rem'
+                }}
+              >
+                <KeyRound size={13} /> Forgot Password?
+              </button>
+            </div>
+          )}
+
           <button 
             type="submit" 
             className="btn btn-primary" 
             disabled={loading}
-            style={{ width: '100%', justifyContent: 'center', marginTop: '1rem', height: '44px' }}
+            style={{ width: '100%', justifyContent: 'center', marginTop: isSignUp ? '0.5rem' : 0, height: '44px' }}
           >
             {loading ? 'Processing...' : (isSignUp ? 'Create Account' : 'Sign In')}
           </button>
@@ -145,7 +218,7 @@ export default function Login() {
           </span>
           <button 
             type="button"
-            onClick={() => { setIsSignUp(!isSignUp); setError(''); }}
+            onClick={() => { setIsSignUp(!isSignUp); setError(''); setSuccessMessage(''); }}
             style={{ background: 'none', border: 'none', color: 'var(--accent-primary)', fontWeight: '700', cursor: 'pointer' }}
           >
             {isSignUp ? 'Sign In' : 'Sign Up'}

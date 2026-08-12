@@ -7,6 +7,7 @@ import {
 import { 
   signInWithEmailAndPassword, 
   createUserWithEmailAndPassword, 
+  sendPasswordResetEmail,
   signOut as firebaseSignOut, 
   onAuthStateChanged 
 } from 'firebase/auth';
@@ -133,6 +134,14 @@ export function AuthProvider({ children }) {
     return user;
   };
 
+  // Password Reset handler via Firebase Auth
+  const resetPassword = async (email) => {
+    if (!isFirebaseConfigured() || !auth) {
+      throw new Error("Firebase is not configured yet. Please configure Firebase keys.");
+    }
+    return await sendPasswordResetEmail(auth, email.trim());
+  };
+
   // Logout handler
   const logout = async () => {
     if (isFirebaseConfigured() && auth) {
@@ -147,6 +156,7 @@ export function AuthProvider({ children }) {
     userRole,
     login,
     signup,
+    resetPassword,
     logout,
     isFirebaseConfigured: isFirebaseConfigured()
   };
